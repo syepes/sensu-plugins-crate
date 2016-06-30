@@ -5,7 +5,13 @@ This CHANGELOG follows the format listed at [Keep A Changelog](http://keepachang
 
 ## [Unreleased]
 
-## 0.0.1 - 2016-06-24
+## 0.1.0 - 2016-07-01
+### Added
+- `check-crate-clucter-checks.rb`
+- `check-crate-node-status.rb`
+- `extension-crate-events.rb` Added maximum buffering and connection retry delay
+
+## 0.0.1 - 2016-05-24
 ### Added
 - Initial release
 

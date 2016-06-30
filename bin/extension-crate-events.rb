@@ -16,7 +16,7 @@
 #   gem: sensu-plugin
 #
 # USAGE:
-#   0) Crate.IO destination table: curl -vXPOST 127.0.0.1:4200/_sql?pretty -d '{"stmt":"CREATE TABLE IF NOT EXISTS events (id string primary key, timestamp timestamp, action string, status string, occurrences integer, client object, check object)"}'
+#   0) Crate.IO destination table: curl -vXPOST 127.0.0.1:4200/_sql?pretty -d '{"stmt":"CREATE TABLE IF NOT EXISTS events (id string, timestamp timestamp, month timestamp GENERATED ALWAYS AS date_trunc('month', timestamp), action string, status string, occurrences integer, client object, check object, primary key(id,timestamp,month)) CLUSTERED BY (id) PARTITIONED BY (month)"}'
 #   1) Add the extension-crate-events.rb to the Sensu extensions folder (/etc/sensu/extensions)
 #   2) Create the Sensu configuration for the extention inside the sensu config folder (/etc/sensu/conf.d)
 #      echo '{ "crate-events": { "hostname": "127.0.0.1", "port": "4200", "table": "events" } }' >/etc/sensu/conf.d/crate_cfg.json
@@ -50,14 +50,16 @@ module Sensu::Extension
       crate_config = settings[@@extension_name]
       validate_config(crate_config)
 
-      hostname         = crate_config['hostname']
-      port             = crate_config['port'] || 4200
-      @table           = crate_config['table']
-      ssl              = crate_config['ssl'] || false
-      ssl_cert         = crate_config['ssl_cert']
-      protocol         = if ssl then 'https' else 'http' end
-      @BUFFER_SIZE     = crate_config['buffer_size'] || 3
-      @BUFFER_MAX_AGE  = crate_config['buffer_max_age'] || 300
+      hostname               = crate_config['hostname']
+      port                   = crate_config['port'] || 4200
+      @table                 = crate_config['table']
+      ssl                    = crate_config['ssl'] || false
+      ssl_cert               = crate_config['ssl_cert']
+      protocol               = if ssl then 'https' else 'http' end
+      @BUFFER_SIZE           = crate_config['buffer_size'] || 3
+      @BUFFER_MAX_AGE        = crate_config['buffer_max_age'] || 300 # seconds
+      @BUFFER_MAX_TRY        = crate_config['buffer_max_try'] || 6
+      @BUFFER_MAX_TRY_DELAY  = crate_config['buffer_max_try_delay'] || 120 # seconds
 
       @uri = URI("#{protocol}://#{hostname}:#{port}/_sql")
       @http = Net::HTTP::new(@uri.host, @uri.port)
@@ -71,17 +73,15 @@ module Sensu::Extension
       end
 
       @buffer = []
+      @buffer_try = 0
+      @buffer_try_sent = 0
       @buffer_flushed = Time.now.to_i
 
-      @logger.info("#{@@extension_name}: Successfully initialized config: hostname: #{hostname}, port: #{port}, table: #{@table}, uri: #{@uri.to_s}, buffer_size: #{@BUFFER_SIZE}, buffer_max_age: #{@BUFFER_MAX_AGE}")
+      @logger.info("#{@@extension_name}: Successfully initialized config: hostname: #{hostname}, port: #{port}, table: #{@table}, uri: #{@uri.to_s}, buffer_size: #{@BUFFER_SIZE}, buffer_max_age: #{@BUFFER_MAX_AGE}:sec, buffer_max_try: #{@BUFFER_MAX_TRY}, buffer_max_try_delay: #{@BUFFER_MAX_TRY_DELAY}:sec")
     end
 
     def run(event)
       begin
-        if buffer_too_old? or buffer_too_big?
-          flush_buffer
-        end
-
         event = JSON.parse(event)
 
         # Convert timestamps to ms as they are directly supported by Crate (https://crate.io/docs/reference/sql/data_types.html#timestamp)
@@ -99,10 +99,15 @@ module Sensu::Extension
           :client => event['client'],
           :check => event['check']
         }
-        @logger.debug("#{@@extension_name}: Event: #{evt['action']} -> #{evt['status']} - #{evt['check']['output']})")
+        @logger.debug("#{@@extension_name}: Event: #{evt[:action]} -> #{evt[:status]} - #{evt[:check]['output']})")
 
         @buffer.push(evt)
         @logger.info("#{@@extension_name}: Stored Event in buffer (#{@buffer.length}/#{@BUFFER_SIZE})")
+
+        if buffer_try_delay? and (buffer_too_old? or buffer_too_big?)
+          flush_buffer
+        end
+
       rescue => e
         @logger.error("#{@@extension_name}: Unable to buffer Event: #{event} - #{e.message} - #{e.backtrace.to_s}")
       end
@@ -111,6 +116,27 @@ module Sensu::Extension
     end
 
     private
+    def flush_buffer
+      begin
+        send_to_crate(@buffer)
+        @buffer = []
+        @buffer_try = 0
+        @buffer_try_sent = 0
+        @buffer_flushed = Time.now.to_i
+
+      rescue Exception => e
+        @buffer_try_sent = Time.now.to_i
+        if @buffer_try >= @BUFFER_MAX_TRY
+          @buffer = []
+          @logger.error("#{@@extension_name}: Maximum retries reached (#{@buffer_try}/#{@BUFFER_MAX_TRY}), All buffered Events have been lost!")
+
+        else
+          @buffer_try +=1
+          @logger.warn("#{@@extension_name}: Writing Event to Crate Failed (#{@buffer_try}/#{@BUFFER_MAX_TRY}), #{e.message}")
+        end
+      end
+    end
+
     def send_to_crate(events)
       # TODO Refactor Ugly JSON workaround
       bulk = events.collect { |e|
@@ -131,23 +157,34 @@ module Sensu::Extension
       response = @http.request(request)
       if response.code.to_i != 200
         @logger.error("#{@@extension_name}: Writing Event to Crate: response code = #{response.code}, body = #{response.body}")
+        raise "response code = #{response.code}"
+
       else
         @logger.info("#{@@extension_name}: Sent #{@buffer.length} Events to Crate")
         @logger.debug("#{@@extension_name}: Writing Event to Crate: response code = #{response.code}, body = #{response.body}")
       end
     end
 
-    def flush_buffer
-      send_to_crate(@buffer)
-      @buffer = []
-      @buffer_flushed = Time.now.to_i
+
+    # Establish a delay between retries failure
+    def buffer_try_delay?
+      seconds = (Time.now.to_i - @buffer_try_sent)
+      if seconds < @BUFFER_MAX_TRY_DELAY
+        @logger.warn("#{@@extension_name}: Waiting for (#{seconds}/#{@BUFFER_MAX_TRY_DELAY}) seconds before next retry")
+        false
+
+      else
+        true
+      end
     end
 
+    # Send Event if buffer is to old
     def buffer_too_old?
       buffer_age = Time.now.to_i - @buffer_flushed
       buffer_age >= @BUFFER_MAX_AGE
     end
 
+    # Send Event if buffer is full
     def buffer_too_big?
       @buffer.length >= @BUFFER_SIZE
     end

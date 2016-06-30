@@ -3,6 +3,8 @@
 ## Functionality
 
 ## Files
+ * /bin/check-crate-node-status.rb
+ * /bin/check-crate-clucter-checks.rb
  * /bin/extension-crate-events.rb
 
 ## Usage
