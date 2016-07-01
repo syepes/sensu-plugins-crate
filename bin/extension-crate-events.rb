@@ -56,7 +56,7 @@ module Sensu::Extension
       ssl                    = crate_config['ssl'] || false
       ssl_cert               = crate_config['ssl_cert']
       protocol               = if ssl then 'https' else 'http' end
-      @BUFFER_SIZE           = crate_config['buffer_size'] || 3
+      @BUFFER_SIZE           = crate_config['buffer_size'] || 500
       @BUFFER_MAX_AGE        = crate_config['buffer_max_age'] || 300 # seconds
       @BUFFER_MAX_TRY        = crate_config['buffer_max_try'] || 6
       @BUFFER_MAX_TRY_DELAY  = crate_config['buffer_max_try_delay'] || 120 # seconds
@@ -113,6 +113,13 @@ module Sensu::Extension
       end
 
       yield("#{@@extension_name}: handler finished", 0)
+    end
+
+    def stop
+      if @buffer.length > 0
+        @logger.info("#{@@extension_name}: Flushing buffer before shutdown (#{@buffer.length}/#{@BUFFER_SIZE})")
+        flush_buffer
+      end
     end
 
     private
