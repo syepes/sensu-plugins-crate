@@ -6,6 +6,7 @@ This CHANGELOG follows the format listed at [Keep A Changelog](http://keepachang
 ## [Unreleased]
 ### Added
 - `extension-crate-events.rb` Added buffering flushing before shutdown
+- `extension-crate-events.rb` Added http gzip compression support (-Des.http.compression=true)
 
 ## 0.1.0 - 2016-07-01
 ### Added

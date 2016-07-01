@@ -56,7 +56,8 @@ module Sensu::Extension
       ssl                    = crate_config['ssl'] || false
       ssl_cert               = crate_config['ssl_cert']
       protocol               = if ssl then 'https' else 'http' end
-      @BUFFER_SIZE           = crate_config['buffer_size'] || 500
+      @HTTP_COMPRESSION      = crate_config['http_compression'] || true
+      @BUFFER_SIZE           = crate_config['buffer_size'] || 1024
       @BUFFER_MAX_AGE        = crate_config['buffer_max_age'] || 300 # seconds
       @BUFFER_MAX_TRY        = crate_config['buffer_max_try'] || 6
       @BUFFER_MAX_TRY_DELAY  = crate_config['buffer_max_try_delay'] || 120 # seconds
@@ -77,7 +78,7 @@ module Sensu::Extension
       @buffer_try_sent = 0
       @buffer_flushed = Time.now.to_i
 
-      @logger.info("#{@@extension_name}: Successfully initialized config: hostname: #{hostname}, port: #{port}, table: #{@table}, uri: #{@uri.to_s}, buffer_size: #{@BUFFER_SIZE}, buffer_max_age: #{@BUFFER_MAX_AGE}:sec, buffer_max_try: #{@BUFFER_MAX_TRY}, buffer_max_try_delay: #{@BUFFER_MAX_TRY_DELAY}:sec")
+      @logger.info("#{@@extension_name}: Successfully initialized config: hostname: #{hostname}, port: #{port}, table: #{@table}, uri: #{@uri.to_s}, http_compression: #{@HTTP_COMPRESSION}, buffer_size: #{@BUFFER_SIZE}, buffer_max_age: #{@BUFFER_MAX_AGE}:sec, buffer_max_try: #{@BUFFER_MAX_TRY}, buffer_max_try_delay: #{@BUFFER_MAX_TRY_DELAY}:sec")
     end
 
     def run(event)
@@ -135,7 +136,7 @@ module Sensu::Extension
         @buffer_try_sent = Time.now.to_i
         if @buffer_try >= @BUFFER_MAX_TRY
           @buffer = []
-          @logger.error("#{@@extension_name}: Maximum retries reached (#{@buffer_try}/#{@BUFFER_MAX_TRY}), All buffered Events have been lost!")
+          @logger.error("#{@@extension_name}: Maximum retries reached (#{@buffer_try}/#{@BUFFER_MAX_TRY}), All buffered Events have been lost!, #{e.message}")
 
         else
           @buffer_try +=1
@@ -155,9 +156,22 @@ module Sensu::Extension
         :bulk_args => bulk
       }
 
-      request = Net::HTTP::Post.new(@uri.request_uri, 'Content-Type' => 'application/json')
-      # TODO Refactor Ugly JSON workaround
-      request.body = data.to_json.to_s.gsub(/"(\w+)"\s*:/, "\\1:").gsub(/[\\]/,"").gsub(/"\{/, "{").gsub(/\}"/, "}")
+      headers = {'Content-Type' => 'application/json'}
+      headers['Content-Encoding'] = 'gzip' if @HTTP_COMPRESSION
+
+      request = Net::HTTP::Post.new(@uri.request_uri, headers)
+
+      # Gzip compress
+      if @HTTP_COMPRESSION
+        compressed = StringIO.new
+        gz_writer = Zlib::GzipWriter.new(compressed)
+        gz_writer.write(data.to_json.to_s.gsub(/"(\w+)"\s*:/, "\\1:").gsub(/[\\]/,"").gsub(/"\{/, "{").gsub(/\}"/, "}"))
+        gz_writer.close
+        request.body = compressed.string
+      else
+        # TODO Refactor Ugly JSON workaround
+        request.body = data.to_json.to_s.gsub(/"(\w+)"\s*:/, "\\1:").gsub(/[\\]/,"").gsub(/"\{/, "{").gsub(/\}"/, "}")
+      end
 
       @logger.debug("#{@@extension_name}: Writing Event: #{request.body} to Crate: #{@uri.to_s}")
 
