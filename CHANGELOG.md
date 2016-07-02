@@ -4,9 +4,13 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 This CHANGELOG follows the format listed at [Keep A Changelog](http://keepachangelog.com/)
 
 ## [Unreleased]
+
+## 0.2.0 - 2016-07-03
 ### Added
 - `extension-crate-events.rb` Added buffering flushing before shutdown
 - `extension-crate-events.rb` Added http gzip compression support (-Des.http.compression=true)
+- `extension-crate-events.rb` Added http timeout support
+- `extension-crate-metrics.rb`
 
 ## 0.1.0 - 2016-07-01
 ### Added

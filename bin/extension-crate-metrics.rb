@@ -1,10 +1,10 @@
 #!/usr/bin/env ruby
 #
-# extension-crate-events
+# extension-crate-metrics
 #
 # DESCRIPTION:
-#   Crate.IO Sensu extension that stores Sensu Events in Crate using the REST-API
-#   Events will be buffered until they reach the configured buffer size or maximum age (buffer_size & buffer_max_age)
+#   Crate.IO Sensu extension that stores Sensu Metrics in Crate using the REST-API
+#   Metrics will be buffered until they reach the configured buffer size  or maximum age (buffer_size & buffer_max_age)
 #
 # OUTPUT:
 #   event data
@@ -16,11 +16,11 @@
 #   gem: sensu-plugin
 #
 # USAGE:
-#   0) Crate.IO destination table: curl -vXPOST 127.0.0.1:4200/_sql?pretty -d '{"stmt":"CREATE TABLE IF NOT EXISTS events (source string, id string, ts timestamp, month timestamp GENERATED ALWAYS AS date_trunc('month', ts), action string, status string, occurrences integer, client object, check object, primary key(id,ts,month)) CLUSTERED BY (id) PARTITIONED BY (month) WITH(number_of_replicas = '2-4')"}'
-#   1) Add the extension-crate-events.rb to the Sensu extensions folder (/etc/sensu/extensions)
+#   0) Crate.IO destination table: curl -vXPOST 127.0.0.1:4200/_sql?pretty -d '{"stmt":"CREATE TABLE IF NOT EXISTS metrics (source string, client string, client_info object, interval int, issued timestamp, executed timestamp, received timestamp, duration float, metric string, key string, val float, ts timestamp, day timestamp GENERATED ALWAYS AS date_trunc('day', ts), primary key(client,key,ts,day)) CLUSTERED BY (key) PARTITIONED BY (day) WITH(number_of_replicas = '2-4')"}'
+#   1) Add the extension-crate-metrics.rb to the Sensu extensions folder (/etc/sensu/extensions)
 #   2) Create the Sensu configuration for the extention inside the sensu config folder (/etc/sensu/conf.d)
-#      echo '{ "crate-events": { "hostname": "127.0.0.1", "port": "4200", "table": "events" } }' >/etc/sensu/conf.d/crate_cfg.json
-#      echo '{ "handlers": { "default": { "type": "set", "handlers": ["crate-events"] } } }' >/etc/sensu/conf.d/crate_handler.json
+#      echo '{ "crate-metrics": { "hostname": "127.0.0.1", "port": "4200", "table": "metrics" } }' >/etc/sensu/conf.d/crate_cfg.json
+#      echo '{ "handlers": { "default": { "type": "set", "handlers": ["crate-metrics"] } } }' >/etc/sensu/conf.d/crate_handler.json
 #
 #
 # NOTES:
@@ -35,16 +35,16 @@ require 'timeout'
 require 'json'
 
 module Sensu::Extension
-  class CrateEvents < Handler
+  class CrateMetrics < Handler
 
-    @@extension_name = 'crate-events'
+    @@extension_name = 'crate-metrics'
 
     def name
       @@extension_name
     end
 
     def description
-      'Historization of Sensu Event in Crate.IO'
+      'Historization of Sensu Metrics in Crate.IO'
     end
 
     def post_init
@@ -60,7 +60,7 @@ module Sensu::Extension
       @SOURCE                = crate_config['source'] || 'sensu'
       @HTTP_COMPRESSION      = crate_config['http_compression'] || true
       @HTTP_TIMEOUT          = crate_config['http_timeout'] || 10 # seconds
-      @BUFFER_SIZE           = crate_config['buffer_size'] || 1024
+      @BUFFER_SIZE           = crate_config['buffer_size'] || 5125
       @BUFFER_MAX_AGE        = crate_config['buffer_max_age'] || 300 # seconds
       @BUFFER_MAX_TRY        = crate_config['buffer_max_try'] || 6
       @BUFFER_MAX_TRY_DELAY  = crate_config['buffer_max_try_delay'] || 120 # seconds
@@ -81,7 +81,7 @@ module Sensu::Extension
       @BUFFER_TRY_SENT = 0
       @BUFFER_FLUSHED = Time.now.to_i
 
-      @logger.info("#{@@extension_name}: Successfully initialized: hostname: #{hostname}, port: #{port}, table: #{@TABLE}, uri: #{@URI.to_s}, http_compression: #{@HTTP_COMPRESSION}, http_timeout: #{@HTTP_TIMEOUT}:s, buffer_size: #{@BUFFER_SIZE}, buffer_max_age: #{@BUFFER_MAX_AGE}:s, buffer_max_try: #{@BUFFER_MAX_TRY}, buffer_max_try_delay: #{@BUFFER_MAX_TRY_DELAY}:s")
+      @logger.info("#{@@extension_name}: Successfully initialized: hostname: #{hostname}, port: #{port}, table: #{@TABLE}, uri: #{@URI.to_s}, http_compression: #{@HTTP_COMPRESSION}, http_timeout: #{@HTTP_TIMEOUT}:s, buffer_size: #{@BUFFER_SIZE}, buffer_max_age: #{@BUFFER_MAX_AGE}:sec, buffer_max_try: #{@BUFFER_MAX_TRY}, buffer_max_try_delay: #{@BUFFER_MAX_TRY_DELAY}:s")
     end
 
     def run(event)
@@ -96,25 +96,35 @@ module Sensu::Extension
 
         evt = {
           :source => @SOURCE,
-          :id => event['id'],
-          :ts => event['timestamp'],
-          :action => event['action'],
-          :status => event_status(event['check']['status']),
-          :occurrences => event['occurrences'],
-          :client => event['client'],
-          :check => event['check']
+          :client => event['client']['name'],
+          :client_info => event['client'],
+          :interval => event['check']['interval'],
+          :issued => event['check']['issued'],
+          :executed => event['check']['executed'],
+          :received => event['timestamp'],
+          :duration => event['check']['duration'],
+          :metric => event['check']['name']
         }
-        @logger.debug("#{@@extension_name}: Event: #{evt[:action]} -> #{evt[:status]} - #{evt[:check]['output']})")
 
-        @BUFFER.push(evt)
-        @logger.info("#{@@extension_name}: Stored Event in buffer (#{@BUFFER.length}/#{@BUFFER_SIZE})")
+        # Graphite format: <metric> <value> <timestamp>
+        event['check']['output'].split(/\r\n|\n/).each do |line|
+            key, val, ts = line.split(/\s+/)
+
+            if not is_number?(ts)
+              @logger.error("Timestamp is Invalid, skipping metric #{line}")
+              next
+            end
+
+            @BUFFER.push(evt.merge({:key => key.split('.')[1..-1].join('.'), :val => val.to_f, :ts => ts.to_i*1000}))
+            @logger.debug("#{@@extension_name}: Stored Metrics in buffer (#{@BUFFER.length}/#{@BUFFER_SIZE}) - #{evt.merge({:key => key.split('.')[1..-1].join('.'), :val => val.to_f, :ts => ts.to_i*1000})}")
+        end
 
         if buffer_try_delay? and (buffer_too_old? or buffer_too_big?)
           flush_buffer
         end
 
       rescue => e
-        @logger.error("#{@@extension_name}: Unable to buffer Event: #{event} - #{e.message} - #{e.backtrace.to_s}")
+        @logger.error("#{@@extension_name}: Unable to buffer Metrics: #{event} - #{e.message} - #{e.backtrace.to_s}")
       end
 
       yield("#{@@extension_name}: handler finished", 0)
@@ -122,7 +132,7 @@ module Sensu::Extension
 
     def stop
       if @BUFFER.length > 0
-        @logger.info("#{@@extension_name}: Flushing Event buffer before shutdown (#{@BUFFER.length}/#{@BUFFER_SIZE})")
+        @logger.info("#{@@extension_name}: Flushing Metric buffer before shutdown (#{@BUFFER.length}/#{@BUFFER_SIZE})")
         flush_buffer
       end
     end
@@ -140,11 +150,11 @@ module Sensu::Extension
         @BUFFER_TRY_SENT = Time.now.to_i
         if @BUFFER_TRY >= @BUFFER_MAX_TRY
           @BUFFER = []
-          @logger.error("#{@@extension_name}: Maximum retries reached (#{@BUFFER_TRY}/#{@BUFFER_MAX_TRY}), All buffered Events have been lost!, #{e.message}")
+          @logger.error("#{@@extension_name}: Maximum retries reached (#{@BUFFER_TRY}/#{@BUFFER_MAX_TRY}), All buffered Metrics have been lost!, #{e.message}")
 
         else
           @BUFFER_TRY +=1
-          @logger.warn("#{@@extension_name}: Writing Event to Crate Failed (#{@BUFFER_TRY}/#{@BUFFER_MAX_TRY}), #{e.message}")
+          @logger.warn("#{@@extension_name}: Writing Metrics to Crate Failed (#{@BUFFER_TRY}/#{@BUFFER_MAX_TRY}), #{e.message}")
         end
       end
     end
@@ -152,11 +162,11 @@ module Sensu::Extension
     def send_to_crate(events)
       # TODO Refactor Ugly JSON workaround
       bulk = events.collect { |e|
-        [e[:source], e[:id], e[:ts], e[:action], e[:status], e[:occurrences], e[:client].to_json.to_s.gsub(/"(\w+)"\s*:/, "\\1:").gsub(/[\\]/,""), e[:check].to_json.to_s.gsub(/"(\w+)"\s*:/, "\\1:").gsub(/[\\]/,"")]
+        [e[:source], e[:client], e[:client_info].to_json.to_s.gsub(/"(\w+)"\s*:/, "\\1:").gsub(/[\\]/,""), e[:interval], e[:issued], e[:executed], e[:received], e[:duration], e[:metric], e[:key], e[:val], e[:ts]]
       }
 
       data = {
-        :stmt => "INSERT INTO #{@TABLE} (source, id, ts, action, status, occurrences, client, check) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        :stmt => "INSERT INTO #{@TABLE} (source, client, client_info, interval, issued, executed, received, duration, metric, key, val, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         :bulk_args => bulk
       }
 
@@ -177,17 +187,17 @@ module Sensu::Extension
         request.body = data.to_json.to_s.gsub(/"(\w+)"\s*:/, "\\1:").gsub(/[\\]/,"").gsub(/"\{/, "{").gsub(/\}"/, "}")
       end
 
-      @logger.debug("#{@@extension_name}: Writing Event: #{request.body} to Crate: #{@URI.to_s}")
+      @logger.debug("#{@@extension_name}: Writing Metrics: #{request.body} to Crate: #{@URI.to_s}")
 
       Timeout::timeout(@HTTP_TIMEOUT) do
         response = @HTTP.request(request)
         if response.code.to_i != 200
-          @logger.error("#{@@extension_name}: Writing Event to Crate: response code = #{response.code}, body = #{response.body}")
+          @logger.error("#{@@extension_name}: Writing Metrics to Crate: response code = #{response.code}, body = #{response.body}")
           raise "response code = #{response.code}"
 
         else
-          @logger.info("#{@@extension_name}: Sent #{@BUFFER.length} Events to Crate")
-          @logger.debug("#{@@extension_name}: Writing Event to Crate: response code = #{response.code}, body = #{response.body}")
+          @logger.info("#{@@extension_name}: Sent #{@BUFFER.length} Metrics to Crate")
+          @logger.debug("#{@@extension_name}: Writing Metrics to Crate: response code = #{response.code}, body = #{response.body}")
         end
       end
     end
@@ -205,28 +215,19 @@ module Sensu::Extension
       end
     end
 
-    # Send Event if buffer is to old
+    # Send Metrics if buffer is to old
     def buffer_too_old?
       buffer_age = Time.now.to_i - @BUFFER_FLUSHED
       buffer_age >= @BUFFER_MAX_AGE
     end
 
-    # Send Event if buffer is full
+    # Send Metrics if buffer is full
     def buffer_too_big?
       @BUFFER.length >= @BUFFER_SIZE
     end
 
-    def event_status(status)
-      case status
-      when 0
-        'Ok'
-      when 1
-        'Warning'
-      when 2
-        'Critical'
-      else
-        'Unknown'
-      end
+    def is_number?(input)
+      true if Integer(input) rescue false
     end
 
     def validate_config(config)

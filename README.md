@@ -6,6 +6,7 @@
  * /bin/check-crate-node-status.rb
  * /bin/check-crate-clucter-checks.rb
  * /bin/extension-crate-events.rb
+ * /bin/extension-crate-metrics.rb
 
 ## Usage
 See the comments on the *.rb files
