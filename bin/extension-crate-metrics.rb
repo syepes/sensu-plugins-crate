@@ -20,7 +20,7 @@
 #   1) Add the extension-crate-metrics.rb to the Sensu extensions folder (/etc/sensu/extensions)
 #   2) Create the Sensu configuration for the extention inside the sensu config folder (/etc/sensu/conf.d)
 #      echo '{ "crate-metrics": { "hostname": "127.0.0.1", "port": "4200", "table": "metrics" } }' >/etc/sensu/conf.d/crate_cfg.json
-#      echo '{ "handlers": { "default": { "type": "set", "handlers": ["crate-metrics"] } } }' >/etc/sensu/conf.d/crate_handler.json
+#      echo '{ "handlers": { "metrics": { "type": "set", "handlers": ["crate-metrics"] } } }' >/etc/sensu/conf.d/crate_handler.json
 #
 #
 # NOTES:
@@ -190,13 +190,15 @@ module Sensu::Extension
       @logger.debug("#{@@extension_name}: Writing Metrics: #{request.body} to Crate: #{@URI.to_s}")
 
       Timeout::timeout(@HTTP_TIMEOUT) do
+        ts_s = Time.now.to_i
         response = @HTTP.request(request)
+        ts_e = Time.now.to_i
         if response.code.to_i != 200
           @logger.error("#{@@extension_name}: Writing Metrics to Crate: response code = #{response.code}, body = #{response.body}")
           raise "response code = #{response.code}"
 
         else
-          @logger.info("#{@@extension_name}: Sent #{@BUFFER.length} Metrics to Crate")
+          @logger.info("#{@@extension_name}: Sent #{@BUFFER.length} Metrics to Crate in (#{ts_e - ts_s}:s)")
           @logger.debug("#{@@extension_name}: Writing Metrics to Crate: response code = #{response.code}, body = #{response.body}")
         end
       end

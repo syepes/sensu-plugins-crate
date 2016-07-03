@@ -180,13 +180,15 @@ module Sensu::Extension
       @logger.debug("#{@@extension_name}: Writing Event: #{request.body} to Crate: #{@URI.to_s}")
 
       Timeout::timeout(@HTTP_TIMEOUT) do
+        ts_s = Time.now.to_i
         response = @HTTP.request(request)
+        ts_e = Time.now.to_i
         if response.code.to_i != 200
           @logger.error("#{@@extension_name}: Writing Event to Crate: response code = #{response.code}, body = #{response.body}")
           raise "response code = #{response.code}"
 
         else
-          @logger.info("#{@@extension_name}: Sent #{@BUFFER.length} Events to Crate")
+          @logger.info("#{@@extension_name}: Sent #{@BUFFER.length} Events to Crate in (#{ts_e - ts_s}:s)")
           @logger.debug("#{@@extension_name}: Writing Event to Crate: response code = #{response.code}, body = #{response.body}")
         end
       end
