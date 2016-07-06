@@ -1,6 +1,7 @@
 ## Sensu-Plugins-Crate
 
 ## Functionality
+ Checks to monitor [Crate.IO](https://crate.io) and extensions for storing [Sensu](https://sensuapp.org) events or metrics in [Crate.IO](https://crate.io)
 
 ## Files
  * /bin/check-crate-node-status.rb

@@ -131,7 +131,7 @@ module Sensu::Extension
     end
 
     def stop
-      if @BUFFER.length > 0
+      if !@BUFFER.nil? and @BUFFER.length > 0
         @logger.info("#{@@extension_name}: Flushing Metric buffer before shutdown (#{@BUFFER.length}/#{@BUFFER_SIZE})")
         flush_buffer
       end
