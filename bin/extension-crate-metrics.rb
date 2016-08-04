@@ -16,10 +16,13 @@
 #   gem: sensu-plugin
 #
 # USAGE:
-#   0) Crate.IO destination table: curl -vXPOST 127.0.0.1:4200/_sql?pretty -d '{"stmt":"CREATE TABLE IF NOT EXISTS metrics (source string, client string, client_info object, interval int, issued timestamp, executed timestamp, received timestamp, duration float, metric string, key string, val float, ts timestamp, day timestamp GENERATED ALWAYS AS date_trunc('day', ts), primary key(client,key,ts,day)) CLUSTERED BY (key) PARTITIONED BY (day) WITH(number_of_replicas = '2-4')"}'
+#   0) Crate.IO destination table:
+#      curl -vXPOST 127.0.0.1:4200/_sql?pretty -d '{"stmt":"CREATE TABLE IF NOT EXISTS sensu_metrics (source string, client string, client_info object, interval int, issued timestamp, executed timestamp, received timestamp, duration float, metric string, key string, val float, ts timestamp, day timestamp GENERATED ALWAYS AS date_trunc('day', ts), primary key(client,key,ts,day)) CLUSTERED BY (key) PARTITIONED BY (day) WITH(number_of_replicas = '2-4')"}'
+#
 #   1) Add the extension-crate-metrics.rb to the Sensu extensions folder (/etc/sensu/extensions)
+#
 #   2) Create the Sensu configuration for the extention inside the sensu config folder (/etc/sensu/conf.d)
-#      echo '{ "crate-metrics": { "hostname": "127.0.0.1", "port": "4200", "table": "metrics" } }' >/etc/sensu/conf.d/crate_cfg.json
+#      echo '{ "crate-metrics": { "hostname": "127.0.0.1", "port": "4200", "table": "sensu_metrics" } }' >/etc/sensu/conf.d/crate_cfg.json
 #      echo '{ "handlers": { "metrics": { "type": "set", "handlers": ["crate-metrics"] } } }' >/etc/sensu/conf.d/crate_handler.json
 #
 #
@@ -108,6 +111,11 @@ module Sensu::Extension
 
         # Graphite format: <metric> <value> <timestamp>
         event['check']['output'].split(/\r\n|\n/).each do |line|
+            if line.split(/\s+/).size != 3
+              @logger.error("Metric is Invalid, skipping metric #{line}")
+              next
+            end
+
             key, val, ts = line.split(/\s+/)
 
             if not is_number?(ts)
@@ -198,18 +206,18 @@ module Sensu::Extension
           raise "response code = #{response.code}"
 
         else
-          @logger.info("#{@@extension_name}: Sent #{@BUFFER.length} Metrics to Crate in (#{ts_e - ts_s}:s)")
+          @logger.info("#{@@extension_name}: Sent #{events.length} Metrics to Crate in (#{ts_e - ts_s}:s)")
           @logger.debug("#{@@extension_name}: Writing Metrics to Crate: response code = #{response.code}, body = #{response.body}")
         end
       end
     end
 
 
-    # Establish a delay between retries failure
+    # Establish a delay between retrie failures
     def buffer_try_delay?
       seconds = (Time.now.to_i - @BUFFER_TRY_SENT)
       if seconds < @BUFFER_MAX_TRY_DELAY
-        @logger.warn("#{@@extension_name}: Waiting for (#{seconds}/#{@BUFFER_MAX_TRY_DELAY}) seconds before next retry")
+        @logger.warn("#{@@extension_name}: Waiting for (#{seconds}/#{@BUFFER_MAX_TRY_DELAY}) seconds before next retry") if ( ((@BUFFER_MAX_TRY_DELAY - seconds) % @BUFFER_MAX_TRY+1) == 0 )
         false
 
       else

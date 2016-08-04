@@ -3,6 +3,11 @@
 ## Functionality
  Checks to monitor [Crate.IO](https://crate.io) and extensions for storing [Sensu](https://sensuapp.org) events or metrics in [Crate.IO](https://crate.io)
 
+## Features
+ - Compression and batch support to enabling high volumes of data
+ - Connectivity timeout and retries with a backoff functionality
+ - Buffering capabilities to prevent data loss
+
 ## Files
  * /bin/check-crate-node-status.rb
  * /bin/check-crate-clucter-checks.rb

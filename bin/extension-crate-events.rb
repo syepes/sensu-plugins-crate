@@ -16,10 +16,13 @@
 #   gem: sensu-plugin
 #
 # USAGE:
-#   0) Crate.IO destination table: curl -vXPOST 127.0.0.1:4200/_sql?pretty -d '{"stmt":"CREATE TABLE IF NOT EXISTS events (source string, id string, ts timestamp, month timestamp GENERATED ALWAYS AS date_trunc('month', ts), action string, status string, occurrences integer, client object, check object, primary key(id,ts,month)) CLUSTERED BY (id) PARTITIONED BY (month) WITH(number_of_replicas = '2-4')"}'
+#   0) Crate.IO destination table:
+#      curl -vXPOST 127.0.0.1:4200/_sql?pretty -d '{"stmt":"CREATE TABLE IF NOT EXISTS sensu_events (source string, id string, ts timestamp, month timestamp GENERATED ALWAYS AS date_trunc('month', ts), action string, status string, occurrences integer, client object, check object, primary key(id,ts,month)) CLUSTERED BY (id) PARTITIONED BY (month) WITH(number_of_replicas = '2-4')"}'
+#
 #   1) Add the extension-crate-events.rb to the Sensu extensions folder (/etc/sensu/extensions)
+#
 #   2) Create the Sensu configuration for the extention inside the sensu config folder (/etc/sensu/conf.d)
-#      echo '{ "crate-events": { "hostname": "127.0.0.1", "port": "4200", "table": "events" } }' >/etc/sensu/conf.d/crate_cfg.json
+#      echo '{ "crate-events": { "hostname": "127.0.0.1", "port": "4200", "table": "sensu_events" } }' >/etc/sensu/conf.d/crate_cfg.json
 #      echo '{ "handlers": { "default": { "type": "set", "handlers": ["crate-events"] } } }' >/etc/sensu/conf.d/crate_handler.json
 #
 #
@@ -188,18 +191,18 @@ module Sensu::Extension
           raise "response code = #{response.code}"
 
         else
-          @logger.info("#{@@extension_name}: Sent #{@BUFFER.length} Events to Crate in (#{ts_e - ts_s}:s)")
+          @logger.info("#{@@extension_name}: Sent #{events.length} Events to Crate in (#{ts_e - ts_s}:s)")
           @logger.debug("#{@@extension_name}: Writing Event to Crate: response code = #{response.code}, body = #{response.body}")
         end
       end
     end
 
 
-    # Establish a delay between retries failure
+    # Establish a delay between retrie failures
     def buffer_try_delay?
       seconds = (Time.now.to_i - @BUFFER_TRY_SENT)
       if seconds < @BUFFER_MAX_TRY_DELAY
-        @logger.warn("#{@@extension_name}: Waiting for (#{seconds}/#{@BUFFER_MAX_TRY_DELAY}) seconds before next retry")
+        @logger.warn("#{@@extension_name}: Waiting for (#{seconds}/#{@BUFFER_MAX_TRY_DELAY}) seconds before next retry") if ( ((@BUFFER_MAX_TRY_DELAY - seconds) % @BUFFER_MAX_TRY+1) == 0 )
         false
 
       else
