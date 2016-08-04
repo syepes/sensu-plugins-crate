@@ -7,23 +7,23 @@ This CHANGELOG follows the format listed at [Keep A Changelog](http://keepachang
 
 ## 0.2.1 - 2016-08-04
 ### Added
-- `extension-crate-metrics.rb` Added metric format validation
+- `extension-crate-metrics.rb` Metric format validation
 
 ### Fixed
 - Reduce the verbosity of the retry logging
 
 ## 0.2.0 - 2016-07-03
 ### Added
-- `extension-crate-events.rb` Added buffering flushing before shutdown
-- `extension-crate-events.rb` Added http gzip compression support (-Des.http.compression=true)
-- `extension-crate-events.rb` Added http timeout support
+- `extension-crate-events.rb` Buffering flushing before shutdown
+- `extension-crate-events.rb` http gzip compression support (-Des.http.compression=true)
+- `extension-crate-events.rb` http timeout support
 - `extension-crate-metrics.rb`
 
 ## 0.1.0 - 2016-07-01
 ### Added
 - `check-crate-clucter-checks.rb`
 - `check-crate-node-status.rb`
-- `extension-crate-events.rb` Added maximum buffering and connection retry delay
+- `extension-crate-events.rb` Maximum buffering and connection retry delay
 
 ## 0.0.1 - 2016-05-24
 ### Added
