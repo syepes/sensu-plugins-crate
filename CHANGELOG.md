@@ -8,6 +8,7 @@ This CHANGELOG follows the format listed at [Keep A Changelog](http://keepachang
 ## 0.2.1 - 2016-08-04
 ### Added
 - `extension-crate-metrics.rb` Added metric format validation
+
 ### Fixed
 - Reduce the verbosity of the retry logging
 
